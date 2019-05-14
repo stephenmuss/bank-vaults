@@ -201,23 +201,29 @@ func (r *ReconcileVault) Reconcile(request reconcile.Request) (reconcile.Result,
 		}
 	}
 
+	var vaultAnnotations map[string]string
+
 	if !v.Spec.GetTLSDisable() {
 
 		var oldSecret corev1.Secret
 
 		key, err := client.ObjectKeyFromObject(v)
 		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to fabricate vault secret key: %v", err)
+			return reconcile.Result{}, fmt.Errorf("failed to fabricate vault tls secret key: %v", err)
 		}
 
 		err = r.client.Get(context.TODO(), key, &oldSecret)
 		if err != nil && !apierrors.IsNotFound(err) {
-			return reconcile.Result{}, fmt.Errorf("failed to query vault secret: %v", err)
+			return reconcile.Result{}, fmt.Errorf("failed to query vault tls secret: %v", err)
 		}
 
 		sec, err := secretForVault(v)
 		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to fabricate secret for vault: %v", err)
+			return reconcile.Result{}, fmt.Errorf("failed to fabricate tls secret for vault: %v", err)
+		}
+
+		for k,v := range sec.Annotations {
+			vaultAnnotations[k] = v
 		}
 
 		// Set Vault instance as the owner and controller
@@ -227,7 +233,7 @@ func (r *ReconcileVault) Reconcile(request reconcile.Request) (reconcile.Result,
 
 		err = r.createObjectIfNotExists(sec)
 		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to create secret for vault: %v", err)
+			return reconcile.Result{}, fmt.Errorf("failed to create tls secret for vault: %v", err)
 		}
 	}
 
@@ -261,7 +267,7 @@ func (r *ReconcileVault) Reconcile(request reconcile.Request) (reconcile.Result,
 	}
 
 	// Create the StatefulSet if it doesn't exist
-	statefulSet, err := statefulSetForVault(v)
+	statefulSet, err := statefulSetForVault(v, vaultAnnotations)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to fabricate StatefulSet: %v", err)
 	}
@@ -853,7 +859,7 @@ func secretForVault(v *vaultv1alpha1.Vault) (*corev1.Secret, error) {
 }
 
 // statefulSetForVault returns a Vault StatefulSet object
-func statefulSetForVault(v *vaultv1alpha1.Vault) (*appsv1.StatefulSet, error) {
+func statefulSetForVault(v *vaultv1alpha1.Vault, annotations map[string]string) (*appsv1.StatefulSet, error) {
 	ls := labelsForVault(v.Name)
 	replicas := v.Spec.Size
 
@@ -941,6 +947,10 @@ func statefulSetForVault(v *vaultv1alpha1.Vault) (*appsv1.StatefulSet, error) {
 	}
 	_, containerPorts := getServicePorts(v)
 
+	for k, v := range v.Spec.GetAnnotations("9102") {
+		annotations[k] = v
+	}
+
 	dep := &appsv1.StatefulSet{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "apps/v1",
@@ -962,7 +972,7 @@ func statefulSetForVault(v *vaultv1alpha1.Vault) (*appsv1.StatefulSet, error) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      ls,
-					Annotations: v.Spec.GetAnnotations("9102"),
+					Annotations: annotations,
 				},
 				Spec: corev1.PodSpec{
 					Affinity: &corev1.Affinity{
