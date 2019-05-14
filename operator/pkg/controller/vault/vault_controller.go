@@ -202,7 +202,19 @@ func (r *ReconcileVault) Reconcile(request reconcile.Request) (reconcile.Result,
 	}
 
 	if !v.Spec.GetTLSDisable() {
-		// Create the secret if it doesn't exist
+
+		var oldSecret corev1.Secret
+
+		key, err := client.ObjectKeyFromObject(v)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to fabricate vault secret key: %v", err)
+		}
+
+		err = r.client.Get(context.TODO(), key, &oldSecret)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("failed to query vault secret: %v", err)
+		}
+
 		sec, err := secretForVault(v)
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to fabricate secret for vault: %v", err)
@@ -813,9 +825,12 @@ func configMapForConfigurer(v *vaultv1alpha1.Vault) *corev1.ConfigMap {
 	return cm
 }
 
-func secretForVault(om *vaultv1alpha1.Vault) (*corev1.Secret, error) {
-	hostsAndIPs := om.Name + "." + om.Namespace + ",127.0.0.1"
-	chain, err := bvtls.GenerateTLS(hostsAndIPs, "8760h")
+func secretForVault(v *vaultv1alpha1.Vault) (*corev1.Secret, error) {
+	hostsAndIPs := v.Name + "." + v.Namespace + ",127.0.0.1"
+
+	validity := 8760 * time.Hour
+
+	chain, err := bvtls.GenerateTLS(hostsAndIPs, validity.String())
 	if err != nil {
 		return nil, err
 	}
@@ -826,9 +841,10 @@ func secretForVault(om *vaultv1alpha1.Vault) (*corev1.Secret, error) {
 			Kind:       "Secret",
 		},
 	}
-	secret.Name = om.Name + "-tls"
-	secret.Namespace = om.Namespace
-	secret.Labels = labelsForVault(om.Name)
+	secret.Name = v.Name + "-tls"
+	secret.Namespace = v.Namespace
+	secret.Labels = labelsForVault(v.Name)
+	secret.Annotations = map[string]string{"certificate-expiry-date": time.Now().Add(validity).String()}
 	secret.StringData = map[string]string{}
 	secret.StringData["ca.crt"] = chain.CACert
 	secret.StringData["server.crt"] = chain.ServerCert
