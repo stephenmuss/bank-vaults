@@ -37,7 +37,6 @@ type dockerCreds struct {
 }
 
 func mutateSecret(obj metav1.Object, secret *corev1.Secret, vaultConfig vaultConfig, ns string) error {
-	logger := &log.Std{Debug: viper.GetBool("debug")}
 	logger.Debugf("SecretData: %s", secret.Data)
 
 	os.Setenv("VAULT_ADDR", vaultConfig.addr)

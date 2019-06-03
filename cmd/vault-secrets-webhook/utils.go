@@ -20,9 +20,8 @@ import (
 	"os"
 	"strings"
 
-	"go.uber.org/zap"
-
 	"github.com/heroku/docker-registry-client/registry"
+	"go.uber.org/zap"
 )
 
 // GetImageBlob download image blob from registry

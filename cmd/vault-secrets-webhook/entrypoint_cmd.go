@@ -18,9 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"go.uber.org/zap"
-
 	"github.com/banzaicloud/bank-vaults/pkg/vault"
+	"go.uber.org/zap"
 )
 
 // GetEntrypointCmd returns entrypoint and command of container

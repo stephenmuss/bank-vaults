@@ -20,7 +20,6 @@ import (
 	"os"
 	"reflect"
 
-	dockerTypes "github.com/docker/docker/api/types"
 	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,10 +37,6 @@ type K8s struct {
 	RegistryUsername string
 	RegistryPassword string
 	Image            string
-}
-
-type dockerCreds struct {
-	Auths map[string]dockerTypes.AuthConfig `json:"auths"`
 }
 
 func (k *K8s) newClientSet() error {

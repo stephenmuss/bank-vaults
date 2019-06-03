@@ -51,10 +51,6 @@ var sanitizeEnvmap = map[string]bool{
 	"VAULT_MFA":             true,
 	"VAULT_ROLE":            true,
 	"VAULT_PATH":            true,
-	"MY_POD_NAME":           true,
-	"NAMESPACE":             true,
-	"CONTAINER_NAME":        true,
-	"REGISTRY_SKIP_VERIFY":  true,
 }
 
 // Appends variable an entry (name=value) into the environ list.
@@ -163,11 +159,8 @@ func main() {
 
 	var entrypointCmd []string
 	if len(os.Args) == 1 {
-		// reads entrypoint and cmd from image configuration
-		entrypoint, cmd := GetEntrypointCmd(client)
-
-		logger.Info("Retrieved configuration", zap.Strings("entrypoint", entrypoint), zap.Strings("cmd", cmd))
-		entrypointCmd = append(entrypoint, cmd...)
+		logger.Fatal("no command is given, vault-env can't determine the entrypoint (command), please specify it explicitly or let the webhook query it (see documentation)")
+		os.Exit(1)
 	} else {
 		entrypointCmd = os.Args[1:]
 	}

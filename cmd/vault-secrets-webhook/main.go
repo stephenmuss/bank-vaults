@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	whhttp "github.com/slok/kubewebhook/pkg/http"
-	"github.com/slok/kubewebhook/pkg/log"
 	whcontext "github.com/slok/kubewebhook/pkg/webhook/context"
 	"github.com/slok/kubewebhook/pkg/webhook/mutating"
 	"github.com/spf13/viper"
@@ -33,6 +32,7 @@ import (
 	metaVer "k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	log "github.com/sirupsen/logrus"
 )
 
 type vaultConfig struct {
@@ -180,7 +180,7 @@ func getContainers(vaultConfig vaultConfig, containerEnvVars []corev1.EnvVar, co
 	return containers
 }
 
-func getVolumes(agentConfigMapName string, vaultConfig vaultConfig, logger log.Logger) []corev1.Volume {
+func getVolumes(agentConfigMapName string, vaultConfig vaultConfig, logger *log.Logger) []corev1.Volume {
 	logger.Debugf("Add generic volumes to podspec")
 
 	volumes := []corev1.Volume{
@@ -506,6 +506,13 @@ func mutateContainers(containers []corev1.Container, vaultConfig vaultConfig, ns
 		mutated = true
 
 		args := append(container.Command, container.Args...)
+		
+		// the container has no explicitly specified command
+		if len(args) == 0 {
+
+		} else {
+			
+		}
 
 		container.Command = []string{"/vault/vault-env"}
 		container.Args = args
@@ -549,7 +556,7 @@ func mutateContainers(containers []corev1.Container, vaultConfig vaultConfig, ns
 	return mutated, nil
 }
 
-func addSecretsVolToContainers(containers []corev1.Container, logger log.Logger) {
+func addSecretsVolToContainers(containers []corev1.Container, logger *log.Logger) {
 
 	for i, container := range containers {
 
@@ -581,8 +588,6 @@ func newClientSet() (*kubernetes.Clientset, error) {
 }
 
 func mutatePodSpec(obj metav1.Object, podSpec *corev1.PodSpec, vaultConfig vaultConfig, ns string) error {
-
-	logger := &log.Std{Debug: viper.GetBool("debug")}
 
 	clientset, err := newClientSet()
 	if err != nil {
@@ -699,7 +704,7 @@ func mutatePodSpec(obj metav1.Object, podSpec *corev1.PodSpec, vaultConfig vault
 	return nil
 }
 
-func initConfig() {
+func init() {
 	viper.SetDefault("vault_image", "vault:latest")
 	viper.SetDefault("vault_env_image", "banzaicloud/vault-env:latest")
 	viper.SetDefault("vault_ct_image", "hashicorp/consul-template:0.19.6-dev-alpine")
@@ -710,9 +715,11 @@ func initConfig() {
 	viper.SetDefault("vault_ct_share_process_namespace", "")
 	viper.SetDefault("psp_allow_privilege_escalation", "false")
 	viper.AutomaticEnv()
+
+	logger = log.New()
 }
 
-func handlerFor(config mutating.WebhookConfig, mutator mutating.MutatorFunc, logger log.Logger) http.Handler {
+func handlerFor(config mutating.WebhookConfig, mutator mutating.MutatorFunc, logger *log.Logger) http.Handler {
 	webhook, err := mutating.NewWebhook(config, mutator, nil, nil, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating webhook: %s", err)
@@ -728,11 +735,9 @@ func handlerFor(config mutating.WebhookConfig, mutator mutating.MutatorFunc, log
 	return handler
 }
 
+var logger *log.Logger
+
 func main() {
-
-	initConfig()
-
-	logger := &log.Std{Debug: viper.GetBool("debug")}
 
 	mutator := mutating.MutatorFunc(vaultSecretsMutator)
 
