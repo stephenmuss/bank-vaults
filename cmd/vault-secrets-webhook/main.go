@@ -514,7 +514,12 @@ func mutateContainers(containers []corev1.Container, podSpec *corev1.PodSpec, va
 			if err != nil {
 				return false, err
 			}
-			entrypoint, cmd := registry.GetEntrypointCmd(clientset, ns, &container, podSpec)
+
+			entrypoint, cmd, err := registry.GetEntrypointCmd(clientset, ns, &container, podSpec)
+			if err != nil {
+				return false, err
+			}
+
 			args = append(args, entrypoint...)
 			args = append(args, cmd...)
 		}

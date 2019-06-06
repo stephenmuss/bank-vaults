@@ -24,8 +24,8 @@ import (
 
 	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/heroku/docker-registry-client/registry"
+	imagev1 "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
-	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -37,29 +37,20 @@ func init() {
 	logger = log.New()
 }
 
-// BlobResponse stores blob response
-type BlobResponse struct {
-	Config Config `json:"config"`
-}
-
-// Config stores Cmd and Entrypoint retrieved from blob response
-type Config struct {
-	Cmd        []string `json:"Cmd"`
-	Entrypoint []string `json:"Entrypoint"`
-}
-
 type DockerCreds struct {
 	Auths map[string]dockerTypes.AuthConfig `json:"auths"`
 }
 
 // GetImageBlob download image blob from registry
-func GetImageBlob(url, username, password, image string) ([]string, []string) {
-	imageName, tag := ParseContainerImage(image)
+func GetImageBlob(url, username, password, image string) ([]string, []string, error) {
+	imageName, tag, err := ParseContainerImage(image)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	registrySkipVerify := os.Getenv("REGISTRY_SKIP_VERIFY")
 
 	var hub *registry.Registry
-	var err error
 
 	if registrySkipVerify == "true" {
 		hub, err = registry.NewInsecure(url, username, password)
@@ -67,12 +58,12 @@ func GetImageBlob(url, username, password, image string) ([]string, []string) {
 		hub, err = registry.New(url, username, password)
 	}
 	if err != nil {
-		logger.Fatal("Cannot create client for registry", zap.Error(err))
+		return nil, nil, fmt.Errorf("cannot create client for registry: %s", err.Error())
 	}
 
 	manifest, err := hub.ManifestV2(imageName, tag)
 	if err != nil {
-		logger.Fatal("Cannot download manifest for image", zap.Error(err))
+		return nil, nil, fmt.Errorf("cannot download manifest for image: %s", err.Error())
 	}
 
 	reader, err := hub.DownloadBlob(imageName, manifest.Config.Digest)
@@ -80,35 +71,37 @@ func GetImageBlob(url, username, password, image string) ([]string, []string) {
 		defer reader.Close()
 	}
 	if err != nil {
-		logger.Fatal("Cannot download blob", zap.Error(err))
+		return nil, nil, fmt.Errorf("cannot download blob: %s", err.Error())
 	}
 
 	b, err := ioutil.ReadAll(reader)
 	if err != nil {
-		logger.Fatal("Cannot read blob", zap.Error(err))
+		return nil, nil, fmt.Errorf("cannot read blob: %s", err.Error())
 	}
 
-	var msg BlobResponse
-	err = json.Unmarshal(b, &msg)
+	logger.Info("downloaded blob len: ", len(b))
+
+	var imageMetadata imagev1.Image
+	err = json.Unmarshal(b, &imageMetadata)
 	if err != nil {
-		logger.Fatal("Cannot unmarshal JSON", zap.Error(err))
+		return nil, nil, fmt.Errorf("cannot unmarshal BlobResponse JSON: %s", err.Error())
 	}
 
-	return msg.Config.Entrypoint, msg.Config.Cmd
+	return imageMetadata.Config.Entrypoint, imageMetadata.Config.Cmd, nil
 }
 
 // ParseContainerImage returns image and tag
-func ParseContainerImage(image string) (string, string) {
+func ParseContainerImage(image string) (string, string, error) {
 	split := strings.SplitN(image, ":", 2)
 
 	if len(split) <= 1 {
-		logger.Fatal("Cannot find tag for image", zap.String("image", image))
+		return "", "", fmt.Errorf("Cannot find tag for image %s", image)
 	}
 
 	imageName := split[0]
 	tag := split[1]
 
-	return imageName, tag
+	return imageName, tag, nil
 }
 
 func isDockerHub(registryAddress string) bool {
@@ -116,14 +109,19 @@ func isDockerHub(registryAddress string) bool {
 }
 
 // GetEntrypointCmd returns entrypoint and command of container
-func GetEntrypointCmd(clientset *kubernetes.Clientset, namespace string, container *corev1.Container, podSpec *corev1.PodSpec) ([]string, []string) {
+func GetEntrypointCmd(clientset *kubernetes.Clientset, namespace string, container *corev1.Container, podSpec *corev1.PodSpec) ([]string, []string, error) {
 	podInfo := K8s{Namespace: namespace, clientset: clientset}
-	podInfo.Load(container, podSpec)
+
+	err := podInfo.Load(container, podSpec)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	if podInfo.RegistryName != "" {
-		logger.Info("Trimmed registry name from image name",
-			zap.String("registry", podInfo.RegistryName),
-			zap.String("image", podInfo.Image),
+		logger.Info(
+			"Trimmed registry name from image name",
+			"registry", podInfo.RegistryName,
+			"image", podInfo.Image,
 		)
 		podInfo.Image = strings.TrimLeft(podInfo.Image, fmt.Sprintf("%s/", podInfo.RegistryName))
 	}
@@ -177,7 +175,7 @@ func (k *K8s) parseDockerConfig(dockerCreds DockerCreds) {
 }
 
 // Load reads information from k8s and load them into the structure
-func (k *K8s) Load(container *corev1.Container, podSpec *corev1.PodSpec) {
+func (k *K8s) Load(container *corev1.Container, podSpec *corev1.PodSpec) error {
 
 	k.Image = container.Image
 
@@ -187,16 +185,19 @@ func (k *K8s) Load(container *corev1.Container, podSpec *corev1.PodSpec) {
 		if k.ImagePullSecrets != "" {
 			data, err := k.readDockerSecret(k.Namespace, k.ImagePullSecrets)
 			if err != nil {
-				logger.Fatal("Cannot read imagePullSecrets", err)
+				return fmt.Errorf("cannot read imagePullSecrets: %s", err.Error())
 			}
+
 			dockerConfig := data[corev1.DockerConfigJsonKey]
-			//parse config
+
 			var dockerCreds DockerCreds
 			err = json.Unmarshal(dockerConfig, &dockerCreds)
 			if err != nil {
-				logger.Fatal("Cannot unmarshal docker configuration from imagePullSecrets", err)
+				return fmt.Errorf("cannot unmarshal docker configuration from imagePullSecrets: %s", err.Error())
 			}
 			k.parseDockerConfig(dockerCreds)
 		}
 	}
+
+	return nil
 }
