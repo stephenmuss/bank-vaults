@@ -111,6 +111,10 @@ func ParseContainerImage(image string) (string, string) {
 	return imageName, tag
 }
 
+func isDockerHub(registryAddress string) bool {
+	return strings.HasPrefix(registryAddress, "https://registry-1.docker.io") || strings.HasPrefix(registryAddress, "https://index.docker.io")
+}
+
 // GetEntrypointCmd returns entrypoint and command of container
 func GetEntrypointCmd(clientset *kubernetes.Clientset, namespace string, container *corev1.Container, podSpec *corev1.PodSpec) ([]string, []string) {
 	podInfo := K8s{Namespace: namespace, clientset: clientset}
@@ -128,7 +132,13 @@ func GetEntrypointCmd(clientset *kubernetes.Clientset, namespace string, contain
 	if registryAddress == "" {
 		registryAddress = "https://registry-1.docker.io/"
 	}
-	logger.Infoln("I'm using registry", registryAddress, podInfo.RegistryUsername, podInfo.RegistryPassword)
+
+	// this is a library image on DockerHub, add the `libarary/` prefix
+	if isDockerHub(registryAddress) && strings.Count(podInfo.Image, "/") == 0 {
+		podInfo.Image = "library/" + podInfo.Image
+	}
+
+	logger.Infoln("I'm using registry", registryAddress)
 
 	return GetImageBlob(registryAddress, podInfo.RegistryUsername, podInfo.RegistryPassword, podInfo.Image)
 }
