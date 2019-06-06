@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/banzaicloud/bank-vaults/cmd/vault-secrets-webhook/registry"
+	log "github.com/sirupsen/logrus"
 	whhttp "github.com/slok/kubewebhook/pkg/http"
 	whcontext "github.com/slok/kubewebhook/pkg/webhook/context"
 	"github.com/slok/kubewebhook/pkg/webhook/mutating"
@@ -32,7 +34,6 @@ import (
 	metaVer "k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	log "github.com/sirupsen/logrus"
 )
 
 type vaultConfig struct {
@@ -470,7 +471,7 @@ func lookForValueFrom(env corev1.EnvVar, ns string) (*corev1.EnvVar, error) {
 	return nil, nil
 }
 
-func mutateContainers(containers []corev1.Container, vaultConfig vaultConfig, ns string) (bool, error) {
+func mutateContainers(containers []corev1.Container, podSpec *corev1.PodSpec, vaultConfig vaultConfig, ns string) (bool, error) {
 	mutated := false
 
 	for i, container := range containers {
@@ -506,12 +507,16 @@ func mutateContainers(containers []corev1.Container, vaultConfig vaultConfig, ns
 		mutated = true
 
 		args := append(container.Command, container.Args...)
-		
+
 		// the container has no explicitly specified command
 		if len(args) == 0 {
-
-		} else {
-			
+			clientset, err := newClientSet()
+			if err != nil {
+				return false, err
+			}
+			entrypoint, cmd := registry.GetEntrypointCmd(clientset, ns, &container, podSpec)
+			args = append(args, entrypoint...)
+			args = append(args, cmd...)
 		}
 
 		container.Command = []string{"/vault/vault-env"}
@@ -574,6 +579,7 @@ func addSecretsVolToContainers(containers []corev1.Container, logger *log.Logger
 
 }
 
+// TODO replace all the calls with a global clientset
 func newClientSet() (*kubernetes.Clientset, error) {
 	kubeConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -596,7 +602,7 @@ func mutatePodSpec(obj metav1.Object, podSpec *corev1.PodSpec, vaultConfig vault
 
 	logger.Debugf("Successfully connected to the API")
 
-	initContainersMutated, err := mutateContainers(podSpec.InitContainers, vaultConfig, ns)
+	initContainersMutated, err := mutateContainers(podSpec.InitContainers, podSpec, vaultConfig, ns)
 	if err != nil {
 		return err
 	}
@@ -607,7 +613,7 @@ func mutatePodSpec(obj metav1.Object, podSpec *corev1.PodSpec, vaultConfig vault
 		logger.Debugf("No pod init containers were mutated")
 	}
 
-	containersMutated, err := mutateContainers(podSpec.Containers, vaultConfig, ns)
+	containersMutated, err := mutateContainers(podSpec.Containers, podSpec, vaultConfig, ns)
 	if err != nil {
 		return err
 	}
